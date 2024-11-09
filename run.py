@@ -9,6 +9,8 @@ import wandb
 from utils.ddp import is_main_process, init_distributed_mode
 from torch import distributed as dist
 
+from utils.mlflow_utils import init_mlflow, init_mlflow_experiment
+
 # ValueError: Error initializing torch.distributed using
 # env:// rendezvous: environment variable RANK expected, but not set
 # https://stackoverflow.com/a/76828907/6412152
@@ -36,11 +38,11 @@ if __name__ == '__main__':
     # data loader
     parser.add_argument('--data', type=str, required=False,
                         default='All', help='dataset type')
-    parser.add_argument('--features', type=str, default='M',
+    parser.add_argument('--features', type=str, default='S',
                         help='forecasting task, options:[M, S, MS]; M:multivariate predict multivariate, S:univariate predict univariate, MS:multivariate predict univariate')
     parser.add_argument('--target', type=str, default='OT',
                         help='target feature in S or MS task')
-    parser.add_argument('--freq', type=str, default='h',
+    parser.add_argument('--freq', type=str, default='s',
                         help='freq for time features encoding, options:[s:secondly, t:minutely, h:hourly, d:daily, b:business days, w:weekly, m:monthly], you can also use more detailed freq like 15min or 3h')
     parser.add_argument('--task_data_config_path', type=str,
                         default='exp/all_task.yaml', help='root path of the task and data yaml file')
@@ -63,7 +65,7 @@ if __name__ == '__main__':
     parser.add_argument("--prompt_tune_epoch", type=int, default=0)
     parser.add_argument('--warmup_epochs', type=int,
                         default=0, help='warmup epochs')
-    parser.add_argument('--batch_size', type=int, default=32,
+    parser.add_argument('--batch_size', type=int, default=64,
                         help='batch size of train input data')
     parser.add_argument('--acc_it', type=int, default=1,
                         help='acc iteration to enlarge batch size')
@@ -115,13 +117,18 @@ if __name__ == '__main__':
 
     # anomaly detection task
     parser.add_argument('--anomaly_ratio', type=float,
-                        default=1.0, help='prior anomaly ratio (%)')
+                        default=10.0, help='prior anomaly ratio (%)')
 
     # zero-shot-forecast-new-length
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--max_offset", type=int, default=0)
     parser.add_argument('--zero_shot_forecasting_new_length',
                         type=str, default=None, help='unify')
+
+    # Petteri: MLflow extra
+    parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
+    parser.add_argument("--mlflow-experiment", type=str, default=None)
+    parser.add_argument("--mlflow-run", type=str, default=None)
 
     args = parser.parse_args()
     init_distributed_mode(args)
@@ -155,6 +162,19 @@ if __name__ == '__main__':
             config=args,
             mode=args.debug,
         )
+        # MLflow (Petteri)
+        if args.mlflow_tracking_uri is not None:
+            init_mlflow(args.mlflow_tracking_uri)
+            if args.mlflow_experiment is not None:
+                init_mlflow_experiment(args.mlflow_experiment)
+                if args.mlflow_run is not None:
+                    mlflow_run_name = args.mlflow_run
+            else:
+                raise ValueError('No mlflow experiment name specified')
+        else:
+            raise ValueError('No MLflow tracking uri specified, not logging the experiment to MLflow')
+
+
 
     Exp = Exp_All_Task_SUP
 
@@ -173,7 +193,7 @@ if __name__ == '__main__':
 
             exp = Exp(args)  # set experiments
             print('>>>>>>>start training : {}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting))
-            exp.train(setting)
+            exp.train(setting, mlflow_run_name)
     else:
         ii = 0
         setting = '{}_{}_{}_{}_ft{}_dm{}_el{}_{}_{}'.format(

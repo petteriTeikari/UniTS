@@ -76,15 +76,27 @@ def data_provider(args, config, flag, ddp=False):  # args,
 
     if 'anomaly_detection' in config['task_name']:
         drop_last = False
+
         print('Loading data with:', Data)
+        # print('Loading the Aeon .ts data here')
+
+        # if UAE:
+        #     data_set = Data(
+        #         root_path=config['root_path'],
+        #         limit_size=config['seq_len'],
+        #         flag=flag,
+        #     )
         data_set = Data(
-            root_path=config['root_path'],
-            limit_size=config['seq_len'],
-            flag=flag,
-        )
+                root_path=config['root_path'],
+                win_size=config['seq_len'],
+                flag=flag,
+            )
+        assert len(data_set) > 0, 'Your dataset is empty'
         if args.subsample_pct is not None and flag == "train":
             data_set = random_subset(
                 data_set, args.subsample_pct, args.fix_seed)
+            assert len(data_set) > 0, ('Your dataset is empty after subsampling, '
+                                       'drop it from your input arguments to have this skipped')
         print("ddp mode is set to false for anomaly_detection", ddp, len(data_set))
         data_loader = DataLoader(
             data_set,

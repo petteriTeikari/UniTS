@@ -1,4 +1,8 @@
+import mlflow
+
 from data_provider.data_factory import data_provider
+from utils.adjf1 import adjbestf1_with_threshold
+from utils.mlflow_utils import log_mlflow_params, mlflow_log_experiment
 from utils.tools import adjust_learning_rate, cal_accuracy, adjustment
 from utils.tools import NativeScalerWithGradNormCount as NativeScaler
 from utils.metrics import metric
@@ -163,7 +167,7 @@ class Exp_All_Task(object):
         else:
             self.task_data_config = self.ori_task_data_config
             self.task_data_config_list = self.ori_task_data_config_list
-        device_id = "cpu" # dist.get_rank() % torch.cuda.device_count()
+        device_id = dist.get_rank() % torch.cuda.device_count()
         self.device_id = device_id
         print("device id", self.device_id)
         self.model = self._build_model()
@@ -263,8 +267,12 @@ class Exp_All_Task(object):
             if test_anomaly_detection and task_config['task_name'] == 'anomaly_detection':
                 train_data_set, train_data_loader = data_provider(
                     self.args, task_config, flag='train', ddp=False)
+                assert len(train_data_set) > 0, 'Your dataset seems empty?'
+                assert len(train_data_loader) > 0, 'Your dataloader seems empty?'
                 data_set, data_loader = data_provider(
                     self.args, task_config, flag, ddp=False)  # ddp false to avoid shuffle
+                assert len(data_set) > 0, 'Your dataset seems empty?'
+                assert len(data_loader) > 0, 'Your dataloader seems empty?'
                 data_set_list.append([train_data_set, data_set])
                 data_loader_list.append([train_data_loader, data_loader])
                 print(task_data_name, len(data_set))
@@ -334,110 +342,137 @@ class Exp_All_Task(object):
         if not prompt_tune:
             print("all trainable.")
 
-    def train(self, setting):
-        path = os.path.join(self.args.checkpoints, setting)
-        if not os.path.exists(path) and is_main_process():
-            os.makedirs(path)
-        self.path = path
+    def train(self, setting, mlflow_run_name):
 
-        # Load pretrained weights (Optional)
-        if self.args.pretrained_weight is not None:
-            if self.args.pretrained_weight == 'auto':
-                pretrain_weight_path = os.path.join(
-                    self.path, 'pretrain_checkpoint.pth')
-            else:
-                pretrain_weight_path = self.args.pretrained_weight
-            print('loading pretrained model:',
-                  pretrain_weight_path, folder=self.path)
-            if 'pretrain_checkpoint.pth' in pretrain_weight_path:
-                state_dict = torch.load(
-                    pretrain_weight_path, map_location='cpu')['student']
-                ckpt = {}
-                for k, v in state_dict.items():
-                    if not ('cls_prompts' in k):
-                        ckpt[k] = v
-            else:
-                ckpt = torch.load(pretrain_weight_path, map_location='cpu')
-            msg = self.model.load_state_dict(ckpt, strict=False)
-            print(msg, folder=self.path)
+        with ((mlflow.start_run(run_name=mlflow_run_name))):
 
-        # Data
-        _, train_loader_list = self._get_data(flag='train')
-        # Since some datasets do not have val set, we use test set and report the performance of last epoch instead of the best epoch.
-        test_data_list, test_loader_list = self._get_data(
-            flag='test', test_anomaly_detection=True)
-        data_loader_cycle, train_steps = init_and_merge_datasets(
-            train_loader_list)
+            log_mlflow_params(args=self.args)
 
-        # Model param check
-        pytorch_total_params = sum(p.numel() for p in self.model.parameters())
-        print("Parameters number for all {} M".format(
-            pytorch_total_params/1e6), folder=self.path)
-        model_param = []
-        for name, param in self.model.named_parameters():
-            if ('prompts' in name and 'prompt2forecat' not in name) or 'prompt_token' in name or \
-                'mask_prompt' in name or 'cls_prompt' in name or 'mask_token' in name or 'cls_token' in name or 'category_token' in name:
-                print('skip this:', name)
-            else:
-                model_param.append(param.numel())
-        model_total_params = sum(model_param)
-        print("Parameters number for UniTS {} M".format(
-            model_total_params/1e6), folder=self.path)
+            path = os.path.join(self.args.checkpoints, setting)
+            if not os.path.exists(path) and is_main_process():
+                os.makedirs(path)
+            self.path = path
 
-        # Optimizer and Criterion
-        model_optim = self._select_optimizer()
-        criterion_list = self._select_criterion(self.task_data_config_list)
-        scaler = NativeScaler()
+            # Load pretrained weights (Optional)
+            if self.args.pretrained_weight is not None:
+                if self.args.pretrained_weight == 'auto':
+                    pretrain_weight_path = os.path.join(
+                        self.path, 'pretrain_checkpoint.pth')
+                else:
+                    pretrain_weight_path = self.args.pretrained_weight
+                print('loading pretrained model:',
+                      pretrain_weight_path, folder=self.path)
+                if 'pretrain_checkpoint.pth' in pretrain_weight_path:
+                    state_dict = torch.load(
+                        pretrain_weight_path, map_location='cpu')['student']
+                    ckpt = {}
+                    for k, v in state_dict.items():
+                        if not ('cls_prompts' in k):
+                            ckpt[k] = v
+                else:
+                    ckpt = torch.load(pretrain_weight_path, map_location='cpu')
+                msg = self.model.load_state_dict(ckpt, strict=False)
+                print(msg, folder=self.path)
 
-        # Set up batch size for each task
-        if torch.cuda.is_available():
+            # Data
+            _, train_loader_list = self._get_data(flag='train')
+            # Since some datasets do not have val set, we use test set and report the performance of last epoch instead of the best epoch.
+            test_data_list, test_loader_list = self._get_data(
+                flag='test', test_anomaly_detection=True)
+            data_loader_cycle, train_steps = init_and_merge_datasets(
+                train_loader_list)
+            assert len(data_loader_cycle) > 0, 'You do not seem to have any dataloaders?'
+
+            # Model param check
+            pytorch_total_params = sum(p.numel() for p in self.model.parameters())
+            print("Parameters number for all {} M".format(
+                pytorch_total_params/1e6), folder=self.path)
+            model_param = []
+            for name, param in self.model.named_parameters():
+                if ('prompts' in name and 'prompt2forecat' not in name) or 'prompt_token' in name or \
+                    'mask_prompt' in name or 'cls_prompt' in name or 'mask_token' in name or 'cls_token' in name or 'category_token' in name:
+                    print('skip this:', name)
+                else:
+                    model_param.append(param.numel())
+            model_total_params = sum(model_param)
+            print("Parameters number for UniTS {} M".format(
+                model_total_params/1e6), folder=self.path)
+
+            # Optimizer and Criterion
+            model_optim = self._select_optimizer()
+            criterion_list = self._select_criterion(self.task_data_config_list)
+            scaler = NativeScaler()
+
+            # Set up batch size for each task
             if self.args.memory_check:
                 self.memory_check(data_loader_cycle, criterion_list)
                 torch.cuda.empty_cache()
             torch.cuda.synchronize()
-        else:
-            print('Petteri: Easier to continue with a GPU from here on now')
-            raise NotImplementedError
-        dist.barrier()
 
-        for epoch in range(self.args.train_epochs+self.args.prompt_tune_epoch):
-            adjust_learning_rate(model_optim, epoch,
-                                 self.real_learning_rate, self.args)
-            # Prompt learning
-            if (epoch+1) <= self.args.prompt_tune_epoch:
-                self.choose_training_parts(prompt_tune=True)
-            else:
-                self.choose_training_parts(prompt_tune=False)
+            dist.barrier()
 
-            train_loss = self.train_one_epoch(
-                model_optim, data_loader_cycle, criterion_list, epoch, train_steps, scaler)
-
-            # we report the results of last epoch and not find the best epoch based on val set, since some datasets do not have val set
-            avg_cls_acc, avg_forecast_mse, avg_forecast_mae = self.test(
-                setting, load_pretrain=False, test_data_list=test_data_list, test_loader_list=test_loader_list)
-
-            # save ckpt
-            if is_main_process():
-                if self.args.prompt_tune_epoch >= 1:
-                    torch.save(self.model.state_dict(),
-                               os.path.join(path, 'ptune_checkpoint.pth'))
+            epoch_losses = []
+            adj_f1s = []
+            best_metric = -np.inf
+            best_epoch = None
+            for epoch in range(self.args.train_epochs+self.args.prompt_tune_epoch):
+                adjust_learning_rate(model_optim, epoch,
+                                     self.real_learning_rate, self.args)
+                # Prompt learning
+                if (epoch+1) <= self.args.prompt_tune_epoch:
+                    self.choose_training_parts(prompt_tune=True)
                 else:
-                    torch.save(self.model.state_dict(),
-                               os.path.join(path, 'checkpoint.pth'))
+                    self.choose_training_parts(prompt_tune=False)
 
-        if is_main_process():
-            wandb.log({'Final_LF-mse': avg_forecast_mse,
-                       'Final_LF-mae': avg_forecast_mae, 'Final_CLS-acc': avg_cls_acc})
-            print("Final score: LF-mse: {}, LF-mae: {}, CLS-acc {}".format(avg_forecast_mse,
-                                                                           avg_forecast_mae, avg_cls_acc), folder=self.path)
+                train_loss = self.train_one_epoch(
+                    model_optim, data_loader_cycle, criterion_list, epoch, train_steps, scaler)
+                epoch_losses.append(train_loss)
+
+                # we report the results of last epoch and not find the best epoch based on val set,
+                # since some datasets do not have val set
+                (avg_cls_acc, avg_forecast_mse, avg_forecast_mae,
+                 avg_f1, avg_adj_f1, threshold, adj_thr, pred, gt, pred_mask) = \
+                    self.test(setting, load_pretrain=False, test_data_list=test_data_list, test_loader_list=test_loader_list)
+                adj_f1s.append(avg_adj_f1)
+
+                if avg_adj_f1 > best_metric:
+                    print(f'Best metric improved from {best_metric} to {avg_adj_f1}')
+                    best_metric = avg_adj_f1
+                    best_epoch = epoch
+                    best_scalars = {'f1': avg_f1,
+                                    'adjbestf1': avg_adj_f1,
+                                    'threshold': threshold,
+                                    'adjbestf1_threshold"': adj_thr}
+                    best_arrays = {'preds': pred,
+                                   'trues': gt,
+                                   'pred_mask': pred_mask}
+
+                    # save ckpt
+                    chkp_path = os.path.join(path, 'checkpoint.pth')
+                    if is_main_process():
+                        if self.args.prompt_tune_epoch >= 1:
+                            torch.save(self.model.state_dict(),
+                                       os.path.join(path, 'ptune_checkpoint.pth'))
+                        else:
+                            torch.save(self.model.state_dict(),
+                                       chkp_path)
+
+            # After all the epochs
+            if is_main_process():
+                wandb.log({'Final_LF-mse': avg_forecast_mse,
+                           'Final_LF-mae': avg_forecast_mae, 'Final_CLS-acc': avg_cls_acc})
+                print("Final score: LF-mse: {}, LF-mae: {}, CLS-acc {}".format(avg_forecast_mse,
+                                                                               avg_forecast_mae, avg_cls_acc), folder=self.path)
+
+                mlflow_log_experiment(epoch_losses,
+                                      avg_adj_f1,
+                                      checkpoint_path=chkp_path)
 
         return self.model
 
     def train_one_epoch(self, model_optim, data_loader_cycle, criterion_list, epoch, train_steps, scaler):
-        if torch.cuda.is_available():
-            current_device = torch.cuda.current_device()
-        else:
-            current_device = 'cpu'
+
+        current_device = torch.cuda.current_device()
         train_loss_set = []
         acc_it = self.args.acc_it
         max_norm = self.args.clip_grad
@@ -492,17 +527,15 @@ class Exp_All_Task(object):
             if (i+1) % acc_it == 0:
                 model_optim.zero_grad()
 
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
+            torch.cuda.synchronize()
 
             loss_sum += loss_display
             loss_sum_display = loss_sum
 
             del sample_init
             del sample_list
-            if torch.cuda.is_available():
-                if torch.cuda.memory_reserved(current_device) > 30*1e9:
-                    torch.cuda.empty_cache()
+            if torch.cuda.memory_reserved(current_device) > 30*1e9:
+                torch.cuda.empty_cache()
 
             if is_main_process():
                 wandb.log(
@@ -518,8 +551,7 @@ class Exp_All_Task(object):
         print("Epoch: {} cost time: {}".format(
             epoch + 1, time.time() - epoch_time), folder=self.path)
         train_loss = np.average(train_loss_set)
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
+        torch.cuda.synchronize()
         dist.barrier()
 
         return train_loss
@@ -641,7 +673,10 @@ class Exp_All_Task(object):
         avg_imputation_mse = []
         avg_imputation_mae = []
         avg_anomaly_f_score = []
+        avg_anomaly_adj_f_score = []
+        print('Testing through the list')
         for task_id, (test_data, test_loader) in enumerate(zip(test_data_list, test_loader_list)):
+            print(task_id)
             task_name = self.task_data_config_list[task_id][1]['task_name']
             data_task_name = self.task_data_config_list[task_id][0]
             if task_name == 'long_term_forecast':
@@ -675,13 +710,14 @@ class Exp_All_Task(object):
                 avg_imputation_mse.append(mse)
                 avg_imputation_mae.append(mae)
             elif task_name == 'anomaly_detection':
-                f_score = self.test_anomaly_detection(
+                f_score, threshold, adjf1, adj_thr, pred, gt, pred_mask = self.test_anomaly_detection(
                     setting, test_data, test_loader, data_task_name, task_id)
                 total_dict[data_task_name] = {'f_score': f_score}
                 if is_main_process():
                     wandb.log({'eval_Anomaly-f_score_' +
                               data_task_name: f_score})
                 avg_anomaly_f_score.append(f_score)
+                avg_anomaly_adj_f_score.append(adjf1)
 
         avg_long_term_forecast_mse = np.average(avg_long_term_forecast_mse)
         avg_long_term_forecast_mae = np.average(avg_long_term_forecast_mae)
@@ -692,16 +728,19 @@ class Exp_All_Task(object):
         avg_imputation_mae = np.average(avg_imputation_mae)
 
         avg_anomaly_f_score = np.average(avg_anomaly_f_score)
+        avg_anomaly_adj_f_score = np.average(avg_anomaly_adj_f_score)
 
         if is_main_process():
             wandb.log({'avg_eval_LF-mse': avg_long_term_forecast_mse, 'avg_eval_LF-mae': avg_long_term_forecast_mae,
                        'avg_eval_CLS-acc': avg_classification_acc,
                        'avg_eval_IMP-mse': avg_imputation_mse, 'avg_eval_IMP-mae': avg_imputation_mae,
-                       'avg_eval_Anomaly-f_score': avg_anomaly_f_score})
+                       'avg_eval_Anomaly-f_score': avg_anomaly_f_score,
+                       'avg_eval_Anomaly-adj_f_score': avg_anomaly_adj_f_score})
             print("Avg score: LF-mse: {}, LF-mae: {}, CLS-acc {}, IMP-mse: {}, IMP-mae: {}, Ano-F: {}".format(avg_long_term_forecast_mse,
                                                                                                               avg_long_term_forecast_mae, avg_classification_acc, avg_imputation_mse, avg_imputation_mae, avg_anomaly_f_score), folder=self.path)
             print(total_dict, folder=self.path)
-        return avg_classification_acc, avg_long_term_forecast_mse, avg_long_term_forecast_mae
+        return (avg_classification_acc, avg_long_term_forecast_mse, avg_long_term_forecast_mae,
+                avg_anomaly_f_score, avg_anomaly_adj_f_score, threshold, adj_thr, pred, gt, pred_mask)
 
     def test_long_term_forecast(self, setting, test_data, test_loader, data_task_name, task_id):
         config = self.task_data_config_list[task_id][1]
@@ -841,12 +880,14 @@ class Exp_All_Task(object):
         return mse, mae
 
     def test_anomaly_detection(self, setting, test_data, test_loader_set, data_task_name, task_id):
+        # See timesnet_test() for getting both splits as we need to be using these
         train_loader, test_loader = test_loader_set
         attens_energy = []
         anomaly_criterion = nn.MSELoss(reduce=False)
 
         self.model.eval()
         # (1) stastic on the train set
+        print('1) train')
         with torch.no_grad():
             for i, (batch_x, batch_y) in enumerate(train_loader):
                 batch_x = batch_x.float().to(self.device_id)
@@ -863,6 +904,7 @@ class Exp_All_Task(object):
         train_energy = np.concatenate(attens_energy, axis=0).reshape(-1)
 
         # (2) find the threshold
+        print('2) threshold')
         attens_energy = []
         test_labels = []
         for i, (batch_x, batch_y) in enumerate(test_loader):
@@ -885,6 +927,7 @@ class Exp_All_Task(object):
         print("Threshold :", threshold)
 
         # (3) evaluation on the test set
+        print('3) eval on test set')
         pred = (test_energy > threshold).astype(int)
         test_labels = np.concatenate(test_labels, axis=0).reshape(-1)
         test_labels = np.array(test_labels)
@@ -894,20 +937,22 @@ class Exp_All_Task(object):
         print("gt:     ", gt.shape)
 
         # (4) detection adjustment
+        print('4) detection adjustment')
+        adjf1, adj_thr = adjbestf1_with_threshold(gt, pred)
         gt, pred = adjustment(gt, pred)
 
         pred = np.array(pred)
         gt = np.array(gt)
         print("pred: ", pred.shape)
         print("gt:   ", gt.shape)
-        accuracy = accuracy_score(gt, pred)
-        precision, recall, f_score, support = precision_recall_fscore_support(
-            gt, pred, average='binary')
-        print("Accuracy : {:0.4f}, Precision : {:0.4f}, Recall : {:0.4f}, F-score : {:0.4f} ".format(
-            accuracy, precision,
-            recall, f_score))
+        # accuracy = accuracy_score(gt, pred)
+        # precision, recall, f_score, support = precision_recall_fscore_support(
+        #     gt, pred, average='binary')
+        # print("Accuracy : {:0.4f}, Precision : {:0.4f}, Recall : {:0.4f}, F-score : {:0.4f} ".format(
+        #     accuracy, precision,
+        #     recall, f_score))
 
-        return f_score
+        return threshold, adjf1, adj_thr, pred, gt
 
     def test_long_term_forecast_offset_unify(self, setting, test_data, test_loader, data_task_name, task_id):
         config = self.task_data_config_list[task_id][1]
@@ -1004,8 +1049,7 @@ class Exp_All_Task(object):
         for data_loader_id in range(data_loader_cycle.num_dataloaders):
             batch_size = 1  # Initial batch size
             max_batch_size = 0  # Record the maximum batch size before OOM
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
+            torch.cuda.synchronize()
             model_tmp.zero_grad(set_to_none=True)
             while True:
                 try:
@@ -1051,6 +1095,6 @@ class Exp_All_Task(object):
         print(self.task_data_config_list)
         del model_tmp
         del extra_mem
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        torch.cuda.empty_cache()
+
         return

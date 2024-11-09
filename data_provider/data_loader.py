@@ -652,7 +652,7 @@ class UEAloader(Dataset):
         # pre_process
         normalizer = Normalizer()
         self.feature_df = normalizer.normalize(self.feature_df)
-        # print(len(self.all_IDs))
+        print(len(self.all_IDs))
 
     def load_all(self, root_path, file_list=None, flag=None):
         """

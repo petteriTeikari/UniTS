@@ -11,7 +11,7 @@ random_port=$((RANDOM % 9000 + 1000))
 torchrun --nnodes 1 --nproc-per-node=1  --master_port $random_port  run.py \
   --fix_seed 2021 \
   --is_training 1 \
-  --subsample_pct 0.05 \
+  --subsample_pct None \
   --model_id $exp_name \
   --pretrained_weight $ckpt_path \
   --model $model_name \
@@ -32,4 +32,7 @@ torchrun --nnodes 1 --nproc-per-node=1  --master_port $random_port  run.py \
   --debug $wandb_mode \
   --project_name $project_name \
   --clip_grad 100 \
-  --task_data_config_path data_provider/PLR_test.yaml
+  --task_data_config_path data_provider/PLR_test.yaml \
+  --mlflow-tracking-uri repo_desktop_clone/foundation_PLR/src/mlruns \
+  --mlflow-experiment PLR_OutlierDetection \
+  --mlflow-run UniTS-Outlier
