@@ -76,9 +76,10 @@ def data_provider(args, config, flag, ddp=False):  # args,
 
     if 'anomaly_detection' in config['task_name']:
         drop_last = False
+        print('Loading data with:', Data)
         data_set = Data(
             root_path=config['root_path'],
-            win_size=config['seq_len'],
+            limit_size=config['seq_len'],
             flag=flag,
         )
         if args.subsample_pct is not None and flag == "train":
@@ -88,7 +89,7 @@ def data_provider(args, config, flag, ddp=False):  # args,
         data_loader = DataLoader(
             data_set,
             batch_size=batch_size,
-            shuffle=False if ddp else shuffle_flag,
+            shuffle=False, # if ddp else shuffle_flag,
             num_workers=args.num_workers,
             sampler=DistributedSampler(data_set) if ddp else None,
             drop_last=drop_last)

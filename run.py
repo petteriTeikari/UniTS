@@ -1,11 +1,24 @@
 import argparse
+import os
+
 import torch
 from exp.exp_sup import Exp_All_Task as Exp_All_Task_SUP
 import random
 import numpy as np
 import wandb
 from utils.ddp import is_main_process, init_distributed_mode
+from torch import distributed as dist
 
+# ValueError: Error initializing torch.distributed using
+# env:// rendezvous: environment variable RANK expected, but not set
+# https://stackoverflow.com/a/76828907/6412152
+os.environ['MASTER_ADDR'] = 'localhost'
+os.environ['MASTER_PORT'] = '12355'
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+# dist.init_process_group(backend='gloo',
+#                         init_method='env://',
+#                         rank = torch.cuda.device_count(),
+#                         world_size = 1)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='UniTS supervised training')
@@ -40,7 +53,7 @@ if __name__ == '__main__':
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
     parser.add_argument('--num_workers', type=int, default=0,
                         help='data loader num workers')
-    parser.add_argument("--memory_check", action="store_true", default=True)
+    parser.add_argument("--memory_check", action="store_true", default=False)
     parser.add_argument("--large_model", action="store_true", default=True)
 
     # optimization

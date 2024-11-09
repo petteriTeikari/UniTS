@@ -29,11 +29,17 @@ def is_main_process():
 def init_distributed_mode(args):
 
     dist.init_process_group(
-        backend="nccl",
+        backend='gloo',
+        init_method='env://',
+        rank = torch.cuda.device_count(),
+        world_size = 1
     )
     rank = dist.get_rank()
-    torch.cuda.set_device(rank)
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.set_device(rank)
+        torch.cuda.empty_cache()
+    else:
+        print('No CUDA device available. Training on CPU')
     print(f"Start running basic DDP on rank {rank}.")
 
     dist.barrier()

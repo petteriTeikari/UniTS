@@ -163,16 +163,84 @@ class Exp_All_Task(object):
         else:
             self.task_data_config = self.ori_task_data_config
             self.task_data_config_list = self.ori_task_data_config_list
-        device_id = dist.get_rank() % torch.cuda.device_count()
+        device_id = "cpu" # dist.get_rank() % torch.cuda.device_count()
         self.device_id = device_id
         print("device id", self.device_id)
         self.model = self._build_model()
 
-    def _build_model(self, ddp=True):
+    def _build_model(self, ddp=False):
         import importlib
         module = importlib.import_module("models."+self.args.model)
+        # task_data_config_list is used to build the model
+        # [['MSL', {'task_name': 'anomaly_detection', 'dataset_name': 'MSL', 'dataset': 'MSL',
+        # 'data': 'MSL', 'root_path': '../dataset/MSL', 'seq_len': 96, 'label_len': 0,
+        # 'pred_len': 0, 'features': 'M', 'embed': 'timeF', 'enc_in': 55, 'dec_in': 55,
+        # 'c_out': 55, 'max_batch': 32}], ['PSM', {'task_name': 'anomaly_detection',
+        # 'dataset_name': 'PSM', 'dataset': 'PSM', 'data': 'PSM', 'root_path': '../dataset/PSM',
+        # 'seq_len': 96, 'label_len': 0, 'pred_len': 0, 'features': 'M', 'embed': 'timeF',
+        # 'enc_in': 25, 'dec_in': 25, 'c_out': 25, 'max_batch': 32}],
+        # ['SMAP', {'task_name': 'anomaly_detection', 'dataset_name':
+        # 'SMAP', 'dataset': 'SMAP', 'data': 'SMAP', 'root_path': '../dataset/SMAP',
+        # 'seq_len': 96, 'label_len': 0, 'pred_len': 0, 'features': 'M',
+        # 'embed': 'timeF', 'enc_in': 25, 'dec_in': 25, 'c_out': 25, 'max_batch': 32}],
+        # ['SMD', {'task_name': 'anomaly_detection', 'dataset_name': 'SMD',
+        # 'dataset': 'SMD', 'data': 'SMD', 'root_path': '../dataset/SMD',
+        # 'seq_len': 96, 'label_len': 0, 'pred_len': 0, 'features': 'M', 'embed': 'timeF',
+        # 'enc_in': 38, 'dec_in': 38, 'c_out': 38, 'max_batch': 32}],
+        # ....
         model = module.Model(
             self.args, self.task_data_config_list).to(self.device_id)
+        # self.args
+        # Namespace(
+        #     acc_it=32,
+        #     anomaly_ratio=1.0,
+        #     batch_size=32,
+        #     checkpoints="./checkpoints/",
+        #     clip_grad=100.0,
+        #     d_model=32,
+        #     data="All",
+        #     debug="online",
+        #     des="'Exp'",
+        #     dist_url="env://",
+        #     dropout=0.0,
+        #     e_layers=3,
+        #     features="M",
+        #     fix_seed=2021,
+        #     freq="h",
+        #     inverse=False,
+        #     is_training=1,
+        #     itr=1,
+        #     large_model=True,
+        #     layer_decay=None,
+        #     learning_rate=0.0005,
+        #     local_rank=None,
+        #     lradj="finetune_anl",
+        #     mask_rate=0.25,
+        #     max_offset=0,
+        #     memory_check=True,
+        #     min_lr=None,
+        #     model="UniTS",
+        #     model_id="finetune_few_shot_anomaly_detection_pct05",
+        #     n_heads=8,
+        #     num_workers=0,
+        #     offset=0,
+        #     patch_len=16,
+        #     pretrained_weight="newcheckpoints/units_x32_pretrain_checkpoint.pth",
+        #     project_name="anomaly_detection",
+        #     prompt_num=10,
+        #     prompt_tune_epoch=0,
+        #     share_embedding=False,
+        #     stride=16,
+        #     subsample_pct=0.05,
+        #     target="OT",
+        #     task_data_config_path="data_provider/anomaly_detection.yaml",
+        #     task_name="ALL_task",
+        #     train_epochs=10,
+        #     warmup_epochs=0,
+        #     weight_decay=0.001,
+        #     zero_shot_forecasting_new_length=None,
+        # )
+
         if ddp:
             model = nn.parallel.DistributedDataParallel(model, device_ids=[self.device_id],
                                                         find_unused_parameters=True, gradient_as_bucket_view=True, static_graph=False)
@@ -322,10 +390,14 @@ class Exp_All_Task(object):
         scaler = NativeScaler()
 
         # Set up batch size for each task
-        if self.args.memory_check:
-            self.memory_check(data_loader_cycle, criterion_list)
-            torch.cuda.empty_cache()
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            if self.args.memory_check:
+                self.memory_check(data_loader_cycle, criterion_list)
+                torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        else:
+            print('Petteri: Easier to continue with a GPU from here on now')
+            raise NotImplementedError
         dist.barrier()
 
         for epoch in range(self.args.train_epochs+self.args.prompt_tune_epoch):
@@ -362,7 +434,10 @@ class Exp_All_Task(object):
         return self.model
 
     def train_one_epoch(self, model_optim, data_loader_cycle, criterion_list, epoch, train_steps, scaler):
-        current_device = torch.cuda.current_device()
+        if torch.cuda.is_available():
+            current_device = torch.cuda.current_device()
+        else:
+            current_device = 'cpu'
         train_loss_set = []
         acc_it = self.args.acc_it
         max_norm = self.args.clip_grad
@@ -416,15 +491,18 @@ class Exp_All_Task(object):
 
             if (i+1) % acc_it == 0:
                 model_optim.zero_grad()
-            torch.cuda.synchronize()
+
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
 
             loss_sum += loss_display
             loss_sum_display = loss_sum
 
             del sample_init
             del sample_list
-            if torch.cuda.memory_reserved(current_device) > 30*1e9:
-                torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                if torch.cuda.memory_reserved(current_device) > 30*1e9:
+                    torch.cuda.empty_cache()
 
             if is_main_process():
                 wandb.log(
@@ -440,7 +518,8 @@ class Exp_All_Task(object):
         print("Epoch: {} cost time: {}".format(
             epoch + 1, time.time() - epoch_time), folder=self.path)
         train_loss = np.average(train_loss_set)
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         dist.barrier()
 
         return train_loss
@@ -925,7 +1004,8 @@ class Exp_All_Task(object):
         for data_loader_id in range(data_loader_cycle.num_dataloaders):
             batch_size = 1  # Initial batch size
             max_batch_size = 0  # Record the maximum batch size before OOM
-            torch.cuda.synchronize()
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
             model_tmp.zero_grad(set_to_none=True)
             while True:
                 try:
@@ -971,5 +1051,6 @@ class Exp_All_Task(object):
         print(self.task_data_config_list)
         del model_tmp
         del extra_mem
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         return

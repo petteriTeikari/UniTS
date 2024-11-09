@@ -666,6 +666,13 @@ class UEAloader(Dataset):
             labels_df: dataframe containing label(s) for each sample
         """
         # Select paths for training and evaluation
+        print('cwd = {}'.format(os.getcwd()))
+        print('Loading data from: {}'.format(root_path))
+        # Petteri, make this absolute
+        root_path = os.path.abspath(root_path)
+        if not os.path.exists(root_path):
+            raise Exception('Path not found: {}'.format(root_path))
+
         if file_list is None:
             data_paths = glob.glob(os.path.join(
                 root_path, '*'))  # list of all paths
