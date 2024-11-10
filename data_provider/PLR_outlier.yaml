@@ -1,12 +1,10 @@
 task_dataset:
-  SERI_PLR_GLAUCOMA: # the dataset and task name
+  SERI_PLR_GLAUCOMA_OUTLIER: # the dataset and task name
     task_name: anomaly_detection # the type of task
-    dataset: SERI_PLR_GLAUCOMA_orig # the name of the dataset
+    dataset: SERI_PLR_GLAUCOMA # the name of the dataset
     data: PLR # the data type of the dataset, use UEA if you use the '.ts' file
-    #data: PSM # the data type of the dataset, use UEA if you use the '.ts' file
     embed: timeF # the embedding method used
-    root_path: ./dataset/SERI_PLR_GLAUCOMA_orig # the root path of the dataset
-    #root_path: ./dataset/SERI_PLR_GLAUCOMA_PSM # the root path of the dataset
+    root_path: ./dataset/SERI_PLR_GLAUCOMA # the root path of the dataset
     seq_len: 500 # the length of the input sequence (1980 / 10)
     label_len: 0 # the length of the label sequence, 0 for classification
     pred_len: 0 # the length of the predicted sequence, 0 for classification
