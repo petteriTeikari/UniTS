@@ -7,7 +7,7 @@ import pandas as pd
 import glob
 import re
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
 from utils.timefeatures import time_features
 # from data_provider.m4 import M4Dataset, M4Meta # removed due to 
@@ -386,6 +386,105 @@ class Dataset_Custom(Dataset):
 #             insample[i, -len(ts):] = ts_last_window
 #             insample_mask[i, -len(ts):] = 1.0
 #         return insample, insample_mask
+
+def dataset_PLR_numpy(root_path, flatten_data: str = False):
+    # vanilla
+    data = pd.read_csv(os.path.join(root_path, 'train.csv'))
+    data = data.values  # this is already preprocessed, coming from export_df_to_ts_format()
+    data = np.nan_to_num(data)
+
+    test_data = pd.read_csv(os.path.join(root_path, 'test.csv'))
+    test_data = test_data.values
+    test_data = np.nan_to_num(test_data)
+
+    test_labels = pd.read_csv(os.path.join(
+        root_path, 'test_label.csv')).values
+    train_labels = pd.read_csv(os.path.join(
+        root_path, 'train_label.csv')).values
+
+    unique_test_labels = np.unique(test_labels)
+    unique_train_labels = np.unique(train_labels)
+    assert len(unique_test_labels) == len(unique_train_labels)
+    assert len(unique_test_labels) == 2
+
+    test_mask_percentage = 100 * (np.sum(test_labels) / test_labels.size)
+    train_mask_percentage = 100 * (np.sum(train_labels) / train_labels.size)
+    print(f'test mask percentage: {test_mask_percentage:.2f}%')
+    print(f'train mask percentage: {train_mask_percentage:.2f}%')
+
+    if flatten_data:
+        test_data = test_data.flatten()[:, np.newaxis]
+        data = data.flatten()[:, np.newaxis]
+        train_labels = train_labels.flatten()[:, np.newaxis]
+        test_labels = test_labels.flatten()[:, np.newaxis]
+
+    X = torch.Tensor(data[:, :, np.newaxis])  # transform to torch tensor
+    y = torch.Tensor(train_labels[:, :, np.newaxis])
+    train_dataset = TensorDataset(X, y)
+    X = torch.Tensor(test_data[:, :, np.newaxis])  # transform to torch tensor
+    y = torch.Tensor(test_labels[:, :, np.newaxis])
+    test_dataset = TensorDataset(X, y)
+
+    return train_dataset, test_dataset
+
+
+class PLRSegLoader(Dataset):
+    def __init__(self, root_path, win_size, step=1, flag="train",
+                 flatten_data: str = True):
+        self.flag = flag
+        self.step = step
+        self.win_size = win_size
+        #self.scaler = StandardScaler()
+        data = pd.read_csv(os.path.join(root_path, 'train.csv'))
+        data = data.values # this is already preprocessed, coming from export_df_to_ts_format()
+        data = np.nan_to_num(data)
+        #self.scaler.fit(data)
+        #data = self.scaler.transform(data)
+        test_data = pd.read_csv(os.path.join(root_path, 'test.csv'))
+        test_data = test_data.values
+        self.test = np.nan_to_num(test_data)
+        #self.test = self.scaler.transform(test_data)
+        self.train = data
+        data_len = len(self.train)
+        self.val = self.train[(int)(data_len * 0.8):]
+        self.test_labels = pd.read_csv(os.path.join(
+            root_path, 'test_label.csv')).values
+        self.train_labels = pd.read_csv(os.path.join(
+            root_path, 'train_label.csv')).values
+
+        if flatten_data:
+            # e.g. (1420,500) -> (710000,1)
+            self.test = self.test.flatten()[:, np.newaxis]
+            self.train = self.train.flatten()[:, np.newaxis]
+            self.test = self.test.flatten()[:, np.newaxis]
+            self.train_labels = self.train_labels.flatten()[:, np.newaxis]
+            self.test_labels = self.test_labels.flatten()[:, np.newaxis]
+            self.val = self.val.flatten()[:, np.newaxis]
+
+    def __len__(self):
+        if self.flag == "train":
+            return (self.train.shape[0] - self.win_size) // self.step + 1
+        elif (self.flag == 'val'):
+            return (self.val.shape[0] - self.win_size) // self.step + 1
+        elif (self.flag == 'test'):
+            return (self.test.shape[0] - self.win_size) // self.step + 1
+        else:
+            return (self.test.shape[0] - self.win_size) // self.win_size + 1
+
+    def __getitem__(self, index):
+        index = index * self.step
+        if self.flag == "train":
+            return np.float32(self.train[index:index + self.win_size]), np.float32(self.test_labels[0:self.win_size])
+        elif (self.flag == 'val'):
+            return np.float32(self.val[index:index + self.win_size]), np.float32(self.test_labels[0:self.win_size])
+        elif (self.flag == 'test'):
+            return np.float32(self.test[index:index + self.win_size]), np.float32(
+                self.test_labels[index:index + self.win_size])
+        else:
+            return np.float32(self.test[
+                              index // self.step * self.win_size:index // self.step * self.win_size + self.win_size]), np.float32(
+                self.test_labels[index // self.step * self.win_size:index // self.step * self.win_size + self.win_size])
+
 
 
 class PSMSegLoader(Dataset):

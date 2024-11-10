@@ -1,7 +1,9 @@
 import mlflow
+from sklearn.metrics import precision_recall_fscore_support, accuracy_score
 
 from data_provider.data_factory import data_provider
-from utils.adjf1 import adjbestf1_with_threshold
+from utils.extra_eval.adjf1 import adjbestf1_with_threshold
+from utils.extra_eval.eval_outlier_detection import eval_outlier_detection
 from utils.mlflow_utils import log_mlflow_params, mlflow_log_experiment
 from utils.tools import adjust_learning_rate, cal_accuracy, adjustment
 from utils.tools import NativeScalerWithGradNormCount as NativeScaler
@@ -10,10 +12,6 @@ from utils.losses import mape_loss, mase_loss, smape_loss
 from utils.dataloader import BalancedDataLoaderIterator
 from utils.layer_decay import param_groups_lrd
 from utils.ddp import get_world_size, is_main_process, gather_tensors_from_all_gpus
-
-from sklearn.metrics import precision_recall_fscore_support
-from sklearn.metrics import accuracy_score
-
 
 import torch
 import torch.nn as nn
@@ -265,11 +263,11 @@ class Exp_All_Task(object):
                 # TODO strange that no val set is used for classification. Set to test set for val
                 flag = 'test'
             if test_anomaly_detection and task_config['task_name'] == 'anomaly_detection':
-                train_data_set, train_data_loader = data_provider(
+                train_data_set, train_data_loader, vanilla_loaders = data_provider(
                     self.args, task_config, flag='train', ddp=False)
                 assert len(train_data_set) > 0, 'Your dataset seems empty?'
                 assert len(train_data_loader) > 0, 'Your dataloader seems empty?'
-                data_set, data_loader = data_provider(
+                data_set, data_loader, _ = data_provider(
                     self.args, task_config, flag, ddp=False)  # ddp false to avoid shuffle
                 assert len(data_set) > 0, 'Your dataset seems empty?'
                 assert len(data_loader) > 0, 'Your dataloader seems empty?'
@@ -277,12 +275,12 @@ class Exp_All_Task(object):
                 data_loader_list.append([train_data_loader, data_loader])
                 print(task_data_name, len(data_set))
             else:
-                data_set, data_loader = data_provider(
+                data_set, data_loader, vanilla_loaders = data_provider(
                     self.args, task_config, flag, ddp=True)
                 data_set_list.append(data_set)
                 data_loader_list.append(data_loader)
                 print(task_data_name, len(data_set))
-        return data_set_list, data_loader_list
+        return data_set_list, data_loader_list, vanilla_loaders
 
     def _select_optimizer(self):
         eff_batch_size = self.args.batch_size * self.args.acc_it * get_world_size()
@@ -342,7 +340,8 @@ class Exp_All_Task(object):
         if not prompt_tune:
             print("all trainable.")
 
-    def train(self, setting, mlflow_run_name):
+    def train(self, setting, mlflow_run_name,
+              use_original_eval: bool = False):
 
         with ((mlflow.start_run(run_name=mlflow_run_name))):
 
@@ -375,9 +374,9 @@ class Exp_All_Task(object):
                 print(msg, folder=self.path)
 
             # Data
-            _, train_loader_list = self._get_data(flag='train')
+            _, train_loader_list, _ = self._get_data(flag='train')
             # Since some datasets do not have val set, we use test set and report the performance of last epoch instead of the best epoch.
-            test_data_list, test_loader_list = self._get_data(
+            test_data_list, test_loader_list, vanilla_loaders = self._get_data(
                 flag='test', test_anomaly_detection=True)
             data_loader_cycle, train_steps = init_and_merge_datasets(
                 train_loader_list)
@@ -431,21 +430,24 @@ class Exp_All_Task(object):
                 # we report the results of last epoch and not find the best epoch based on val set,
                 # since some datasets do not have val set
                 (avg_cls_acc, avg_forecast_mse, avg_forecast_mae,
-                 avg_f1, avg_adj_f1, threshold, adj_thr, pred, gt, pred_mask) = \
-                    self.test(setting, load_pretrain=False, test_data_list=test_data_list, test_loader_list=test_loader_list)
-                adj_f1s.append(avg_adj_f1)
+                 avg_f1, extra_dict_metrics) = \
+                    self.test(setting, load_pretrain=False, test_data_list=test_data_list, test_loader_list=test_loader_list,
+                              use_original_eval=use_original_eval, vanilla_loaders=vanilla_loaders)
 
-                if avg_adj_f1 > best_metric:
-                    print(f'Best metric improved from {best_metric} to {avg_adj_f1}')
-                    best_metric = avg_adj_f1
+                if extra_dict_metrics is not None:
+                    # using the adjusted F1
+                    metric_this_epoch = extra_dict_metrics['outlier_test']['scalars']['adjbestf1']
+                else:
+                    metric_this_epoch = avg_f1
+
+                if metric_this_epoch > best_metric:
+                    print(f'Best metric improved from {best_metric:.3f} to {metric_this_epoch:.3f}')
+                    best_metric = metric_this_epoch
                     best_epoch = epoch
-                    best_scalars = {'f1': avg_f1,
-                                    'adjbestf1': avg_adj_f1,
-                                    'threshold': threshold,
-                                    'adjbestf1_threshold"': adj_thr}
-                    best_arrays = {'preds': pred,
-                                   'trues': gt,
-                                   'pred_mask': pred_mask}
+                    best_dict = copy.deepcopy(extra_dict_metrics)
+                    artifacts = {'results': best_dict,
+                                 'best_epoch': best_epoch,
+                                 'best_metric': best_metric}
 
                     # save ckpt
                     chkp_path = os.path.join(path, 'checkpoint.pth')
@@ -456,17 +458,19 @@ class Exp_All_Task(object):
                         else:
                             torch.save(self.model.state_dict(),
                                        chkp_path)
+                else:
+                    print(f'Metric value {metric_this_epoch} was not better than previous best ({best_metric})')
 
             # After all the epochs
             if is_main_process():
-                wandb.log({'Final_LF-mse': avg_forecast_mse,
-                           'Final_LF-mae': avg_forecast_mae, 'Final_CLS-acc': avg_cls_acc})
-                print("Final score: LF-mse: {}, LF-mae: {}, CLS-acc {}".format(avg_forecast_mse,
-                                                                               avg_forecast_mae, avg_cls_acc), folder=self.path)
-
+                # wandb.log({'Final_LF-mse': avg_forecast_mse,
+                #            'Final_LF-mae': avg_forecast_mae, 'Final_CLS-acc': avg_cls_acc})
+                # print("Final score: LF-mse: {}, LF-mae: {}, CLS-acc {}".format(avg_forecast_mse,
+                #                                                                avg_forecast_mae, avg_cls_acc), folder=self.path)
                 mlflow_log_experiment(epoch_losses,
-                                      avg_adj_f1,
-                                      checkpoint_path=chkp_path)
+                                      artifacts,
+                                      checkpoint_path=chkp_path,
+                                      args=self.args)
 
         return self.model
 
@@ -625,9 +629,10 @@ class Exp_All_Task(object):
         task_name = config['task_name']
         features = config['features']
 
-        batch_x, _ = this_batch
+        batch_x, _ = this_batch # (list: (32, 256, 1), (32, 256, 1)) -> (32, 256,1) (batch_sz, seq_len, no_pof_feats)
 
         batch_x = batch_x.float().to(self.device_id)
+        # no_samples = batch_x.shape[0]*batch_x.shape[1] # e.g. 8192 samples
 
         with torch.cuda.amp.autocast():
             outputs = model(batch_x, None, None,
@@ -639,12 +644,13 @@ class Exp_All_Task(object):
         return loss
 
 
-    def test(self, setting, load_pretrain=False, test_data_list=None, test_loader_list=None):
+    def test(self, setting, load_pretrain=False, test_data_list=None, test_loader_list=None,
+             use_original_eval: bool=False, vanilla_loaders: dict = None):
         self.path = os.path.join(self.args.checkpoints, setting)
         if not os.path.exists(self.path) and is_main_process():
             os.makedirs(self.path)
         if test_data_list is None or test_loader_list is None:
-            test_data_list, test_loader_list = self._get_data(
+            test_data_list, test_loader_list, vanilla_loaders = self._get_data(
                 flag='test', test_anomaly_detection=True)
         if load_pretrain:
             if os.path.exists(self.args.pretrained_weight):
@@ -674,9 +680,8 @@ class Exp_All_Task(object):
         avg_imputation_mae = []
         avg_anomaly_f_score = []
         avg_anomaly_adj_f_score = []
-        print('Testing through the list')
+        extra_dict_metrics = None # Petteri's add
         for task_id, (test_data, test_loader) in enumerate(zip(test_data_list, test_loader_list)):
-            print(task_id)
             task_name = self.task_data_config_list[task_id][1]['task_name']
             data_task_name = self.task_data_config_list[task_id][0]
             if task_name == 'long_term_forecast':
@@ -710,14 +715,27 @@ class Exp_All_Task(object):
                 avg_imputation_mse.append(mse)
                 avg_imputation_mae.append(mae)
             elif task_name == 'anomaly_detection':
-                f_score, threshold, adjf1, adj_thr, pred, gt, pred_mask = self.test_anomaly_detection(
-                    setting, test_data, test_loader, data_task_name, task_id)
-                total_dict[data_task_name] = {'f_score': f_score}
-                if is_main_process():
-                    wandb.log({'eval_Anomaly-f_score_' +
-                              data_task_name: f_score})
-                avg_anomaly_f_score.append(f_score)
-                avg_anomaly_adj_f_score.append(adjf1)
+                if use_original_eval:
+                    # Petteri: in the original implementation
+                    f_score = self.test_anomaly_detection(
+                        setting, test_data, test_loader, data_task_name, task_id)
+                    total_dict[data_task_name] = {'f_score': f_score}
+                    if is_main_process():
+                        wandb.log({'eval_Anomaly-f_score_' +
+                                  data_task_name: f_score})
+                    avg_anomaly_f_score.append(f_score)
+                    extra_dict_metrics = {}
+                else:
+                    # Petteri: output all the stuff that other methods in Foundation_PLR do
+                    train_loader = vanilla_loaders['train']
+                    test_loader = vanilla_loaders['test']
+                    #train_loader, test_loader = test_loader
+                    extra_dict_metrics = eval_outlier_detection(model=self.model,
+                                                                train_loader=train_loader,
+                                                                test_loader=test_loader,
+                                                                device_id=self.device_id,
+                                                                device='cuda',
+                                                                task_id=task_id)
 
         avg_long_term_forecast_mse = np.average(avg_long_term_forecast_mse)
         avg_long_term_forecast_mae = np.average(avg_long_term_forecast_mae)
@@ -728,19 +746,19 @@ class Exp_All_Task(object):
         avg_imputation_mae = np.average(avg_imputation_mae)
 
         avg_anomaly_f_score = np.average(avg_anomaly_f_score)
-        avg_anomaly_adj_f_score = np.average(avg_anomaly_adj_f_score)
 
-        if is_main_process():
-            wandb.log({'avg_eval_LF-mse': avg_long_term_forecast_mse, 'avg_eval_LF-mae': avg_long_term_forecast_mae,
-                       'avg_eval_CLS-acc': avg_classification_acc,
-                       'avg_eval_IMP-mse': avg_imputation_mse, 'avg_eval_IMP-mae': avg_imputation_mae,
-                       'avg_eval_Anomaly-f_score': avg_anomaly_f_score,
-                       'avg_eval_Anomaly-adj_f_score': avg_anomaly_adj_f_score})
-            print("Avg score: LF-mse: {}, LF-mae: {}, CLS-acc {}, IMP-mse: {}, IMP-mae: {}, Ano-F: {}".format(avg_long_term_forecast_mse,
-                                                                                                              avg_long_term_forecast_mae, avg_classification_acc, avg_imputation_mse, avg_imputation_mae, avg_anomaly_f_score), folder=self.path)
-            print(total_dict, folder=self.path)
+        # if is_main_process():
+        #     wandb.log({'avg_eval_LF-mse': avg_long_term_forecast_mse, 'avg_eval_LF-mae': avg_long_term_forecast_mae,
+        #                'avg_eval_CLS-acc': avg_classification_acc,
+        #                'avg_eval_IMP-mse': avg_imputation_mse, 'avg_eval_IMP-mae': avg_imputation_mae,
+        #                'avg_eval_Anomaly-f_score': avg_anomaly_f_score,
+        #                'avg_eval_Anomaly-adj_f_score': avg_anomaly_adj_f_score})
+        #     print("Avg score: LF-mse: {}, LF-mae: {}, CLS-acc {}, IMP-mse: {}, IMP-mae: {}, Ano-F: {}".format(avg_long_term_forecast_mse,
+        #                                                                                                       avg_long_term_forecast_mae, avg_classification_acc, avg_imputation_mse, avg_imputation_mae, avg_anomaly_f_score), folder=self.path)
+        #     print(total_dict, folder=self.path)
+
         return (avg_classification_acc, avg_long_term_forecast_mse, avg_long_term_forecast_mae,
-                avg_anomaly_f_score, avg_anomaly_adj_f_score, threshold, adj_thr, pred, gt, pred_mask)
+                avg_anomaly_f_score, extra_dict_metrics)
 
     def test_long_term_forecast(self, setting, test_data, test_loader, data_task_name, task_id):
         config = self.task_data_config_list[task_id][1]
@@ -945,14 +963,15 @@ class Exp_All_Task(object):
         gt = np.array(gt)
         print("pred: ", pred.shape)
         print("gt:   ", gt.shape)
-        # accuracy = accuracy_score(gt, pred)
-        # precision, recall, f_score, support = precision_recall_fscore_support(
-        #     gt, pred, average='binary')
-        # print("Accuracy : {:0.4f}, Precision : {:0.4f}, Recall : {:0.4f}, F-score : {:0.4f} ".format(
-        #     accuracy, precision,
-        #     recall, f_score))
+        accuracy = accuracy_score(gt, pred)
+        precision, recall, f_score, support = precision_recall_fscore_support(
+            gt, pred, average='binary')
+        print("Accuracy : {:0.4f}, Precision : {:0.4f}, Recall : {:0.4f}, F-score : {:0.4f} ".format(
+            accuracy, precision,
+            recall, f_score))
 
-        return threshold, adjf1, adj_thr, pred, gt
+        return f_score
+
 
     def test_long_term_forecast_offset_unify(self, setting, test_data, test_loader, data_task_name, task_id):
         config = self.task_data_config_list[task_id][1]

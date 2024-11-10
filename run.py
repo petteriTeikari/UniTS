@@ -65,7 +65,7 @@ if __name__ == '__main__':
     parser.add_argument("--prompt_tune_epoch", type=int, default=0)
     parser.add_argument('--warmup_epochs', type=int,
                         default=0, help='warmup epochs')
-    parser.add_argument('--batch_size', type=int, default=64,
+    parser.add_argument('--batch_size', type=int, default=256,
                         help='batch size of train input data')
     parser.add_argument('--acc_it', type=int, default=1,
                         help='acc iteration to enlarge batch size')

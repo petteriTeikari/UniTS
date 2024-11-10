@@ -1,5 +1,5 @@
 from data_provider.data_loader import Dataset_ETT_hour, Dataset_ETT_minute, Dataset_Custom, PSMSegLoader, \
-    MSLSegLoader, SMAPSegLoader, SMDSegLoader, SWATSegLoader, UEAloader, GLUONTSDataset
+    MSLSegLoader, SMAPSegLoader, SMDSegLoader, SWATSegLoader, UEAloader, GLUONTSDataset, PLRSegLoader, dataset_PLR_numpy
 from data_provider.uea import collate_fn
 import torch
 from torch.utils.data import DataLoader, Subset
@@ -13,6 +13,7 @@ data_dict = {
     'custom': Dataset_Custom,
     # 'm4': Dataset_M4,  Removed due to the LICENSE file constraints of m4.py
     'PSM': PSMSegLoader,
+    'PLR': PLRSegLoader,
     'MSL': MSLSegLoader,
     'SMAP': SMAPSegLoader,
     'SMD': SMDSegLoader,
@@ -105,7 +106,27 @@ def data_provider(args, config, flag, ddp=False):  # args,
             num_workers=args.num_workers,
             sampler=DistributedSampler(data_set) if ddp else None,
             drop_last=drop_last)
-        return data_set, data_loader
+
+        # Petteri: Extra vanilla loaders that you can use after the training
+        train_dataset, test_dataset = dataset_PLR_numpy(root_path=config['root_path'])
+        vanilla_dataloaders = {'train': DataLoader(train_dataset,
+                                                   batch_size=batch_size,
+                                                   num_workers=args.num_workers,
+                                                   shuffle=False),
+                               'test': DataLoader(test_dataset,
+                                                  batch_size=batch_size,
+                                                  num_workers=args.num_workers,
+                                                  shuffle=False
+                                                  )
+                               }
+
+        # check the dataloader before training
+        no_samples = 0
+        for batch_x, batch_labels in data_loader:
+            no_timepoints_per_batch = batch_x.shape[0]*batch_x.shape[1]
+            no_samples += no_timepoints_per_batch
+
+        return data_set, data_loader, vanilla_dataloaders
     elif 'classification' in config['task_name']:
         drop_last = False
         data_set = Data(

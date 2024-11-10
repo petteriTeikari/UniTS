@@ -97,7 +97,7 @@ class Exp_All_Task(object):
             if task_config['data'] == 'UEA' and flag == 'val':
                 # TODO strange that no val set is used for classification. Set to test set for val
                 flag = 'test'
-            data_set, data_loader = data_provider(
+            data_set, data_loader, _ = data_provider(
                 self.args, task_config, flag, ddp=True)
             data_set_list.append(data_set)
             data_loader_list.append(data_loader)
