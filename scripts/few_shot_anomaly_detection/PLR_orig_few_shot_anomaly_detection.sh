@@ -26,8 +26,8 @@ torchrun --nnodes 1 --nproc-per-node=1  --master_port $random_port  run.py \
   --learning_rate 5e-4 \
   --weight_decay 1e-3 \
   --train_epochs 10 \
-  --batch_size 32 \
-  --acc_it 32 \
+  --batch_size 256 \
+  --acc_it 1 \
   --dropout 0 \
   --debug $wandb_mode \
   --project_name $project_name \
