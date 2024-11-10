@@ -4,6 +4,8 @@ from loguru import logger
 import torch
 from torch import nn
 from utils.extra_eval.adjf1 import adjbestf1_with_threshold
+#from src.submodules.UniTS.utils.extra_eval.adjf1 import adjbestf1_with_threshold
+
 from sklearn.metrics import precision_recall_fscore_support
 from sklearn.metrics import accuracy_score
 from tqdm import tqdm
@@ -30,8 +32,7 @@ def get_no_of_windows(length_PLR: int = 1981, window_size: int = 512):
 
 def reshape_array(array,
                   window_size: int = 500,
-                  length_PLR: int = 1981,
-                  dim: int = 2):
+                  length_PLR: int = 1981):
     """
     Reshape the array to the original shape (e.g. from (64,512) to (16,1981))
     array: np.array
@@ -41,6 +42,11 @@ def reshape_array(array,
         length_PLR=length_PLR,
         window_size=window_size,
     )
+
+    dim = len(array.shape)
+    if dim == 3:
+        array = np.squeeze(array)
+        dim = len(array.shape)
 
     if dim == 2:
         array = np.reshape(
@@ -153,7 +159,7 @@ def forward_three_item_loader(
     labels = []
     recon = []
     with torch.no_grad():
-        for i, (batch_x, batch_y, _) in enumerate(tqdm(loader, 'attens_energy')):
+        for i, (batch_x, batch_y, _) in enumerate(loader):
             batch_x = batch_x.float().to(device)  # e.g (16,100)
             batch_x = batch_x.unsqueeze(2)  # e.g. (16,100,1)
             outputs = model(batch_x, None, None, None)  # e.g. (16,100,1)
@@ -223,8 +229,8 @@ def get_attens_energy(loader, model, device, criterion):
         raise ValueError('No of items = {} in dataloader not supported'.format(no_of_items_in_batch))
 
     attens_energy = np.concatenate(attens_energy, axis=0)
-    recon = np.concatenate(recon, axis=0)[:,:,0]
-    labels = np.concatenate(labels, axis=0)[:,:,0]
+    recon = np.concatenate(recon, axis=0)#[:,:,0]
+    labels = np.concatenate(labels, axis=0)#[:,:,0]
     attens_energy, labels, recon = reshape_arrays_to_input_lengths(attens_energy, labels, recon)
 
     outlier_percentage = 100 * (labels.sum() / labels.size)
