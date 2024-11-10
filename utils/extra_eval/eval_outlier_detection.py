@@ -132,7 +132,7 @@ def metrics_per_split(energy, labels, threshold,
     (
         metrics_test["scalars"]["precision"],
         metrics_test["scalars"]["recall"],
-        metrics_test["scalars"]["f_score"],
+        metrics_test["scalars"]["f1"],
         metrics_test["scalars"]["support"],
     ) = precision_recall_fscore_support(gt, pred, average="binary")
 
