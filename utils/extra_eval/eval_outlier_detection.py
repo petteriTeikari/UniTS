@@ -3,8 +3,9 @@ import numpy as np
 from loguru import logger
 import torch
 from torch import nn
-from utils.extra_eval.adjf1 import adjbestf1_with_threshold
-#from src.submodules.UniTS.utils.extra_eval.adjf1 import adjbestf1_with_threshold
+from sklearn.metrics import confusion_matrix
+
+# from src.submodules.UniTS.utils.extra_eval.adjf1 import adjbestf1_with_threshold
 
 from sklearn.metrics import precision_recall_fscore_support
 from sklearn.metrics import accuracy_score
@@ -30,9 +31,7 @@ def get_no_of_windows(length_PLR: int = 1981, window_size: int = 512):
     return np.ceil(length_PLR / window_size).astype(int)
 
 
-def reshape_array(array,
-                  window_size: int = 500,
-                  length_PLR: int = 1981):
+def reshape_array(array, window_size: int = 500, length_PLR: int = 1981):
     """
     Reshape the array to the original shape (e.g. from (64,512) to (16,1981))
     array: np.array
@@ -93,8 +92,37 @@ def adjustment(gt, pred):
     return gt, pred
 
 
-def metrics_per_split(energy, labels, threshold,
-                      window_size: int = 500, length_PLR: int = 1981):
+def get_scalar_outlier_metrics(preds: np.ndarray, gt: np.ndarray):
+    metrics = {}
+
+    if len(gt.shape) > 1:
+        gt = gt.flatten()
+        preds = preds.flatten()
+
+    no_unique_gt = len(np.unique(gt))
+    assert no_unique_gt == 2, "You have {} classes, should be binary now"
+
+    no_unique_pred = len(np.unique(preds))
+    assert no_unique_pred == 2, "You have {} classes, should be binary now"
+
+    metrics["accuracy"] = accuracy_score(gt, preds)
+
+    (
+        metrics["precision"],
+        metrics["recall"],
+        metrics["f1"],
+        metrics["support"],
+    ) = precision_recall_fscore_support(gt, preds, average="binary")
+
+    _, fp, _, _ = confusion_matrix(gt.flatten(), preds.flatten()).ravel()
+    metrics["fp"] = float(fp) / len(gt.flatten())
+
+    return metrics
+
+
+def metrics_per_split(
+    energy, labels, threshold, window_size: int = 500, length_PLR: int = 1981
+):
     metrics_test = {"scalars": {}, "arrays": {}, "arrays_flat": {}}
     metrics_test["arrays"]["trues"] = labels
 
@@ -106,35 +134,13 @@ def metrics_per_split(energy, labels, threshold,
     gt = labels.astype(int)  # e.g. (32000,)
     assert pred.shape == gt.shape
 
-    # MOMENT used adjusted F1 as the main metric, so let's get that here as well
-    # This includes the adjustment()
-    (
-        metrics_test["scalars"]["adjbestf1"],
-        metrics_test["scalars"]["adjbestf1_threshold"],
-    ) = adjbestf1_with_threshold(y_true=gt, y_scores=pred)
-
     # (4) detection adjustment
     gt, pred = adjustment(gt, pred)
     pred = np.array(pred)
     gt = np.array(gt)
-    #metrics_test["arrays_flat"]["trues"] = gt
-    #metrics_test["arrays_flat"]["pred_mask"] = pred
 
     # The vanilla metrics
-    metrics_test["scalars"]["accuracy"] = accuracy_score(gt, pred)
-
-    no_unique_gt = len(np.unique(gt))
-    assert no_unique_gt == 2, 'You have {} classes, should be binary now'
-
-    no_unique_pred = len(np.unique(pred))
-    assert no_unique_pred == 2, 'You have {} classes, should be binary now'
-
-    (
-        metrics_test["scalars"]["precision"],
-        metrics_test["scalars"]["recall"],
-        metrics_test["scalars"]["f1"],
-        metrics_test["scalars"]["support"],
-    ) = precision_recall_fscore_support(gt, pred, average="binary")
+    metrics_test["scalars"] = get_scalar_outlier_metrics(preds=pred, gt=gt)
 
     return metrics_test
 
@@ -145,9 +151,7 @@ def get_score(criterion, batch_x, outputs):
     return score
 
 
-def forward_three_item_loader(
-    loader, model, device, criterion
-):
+def forward_three_item_loader(loader, model, device, criterion):
     """
     args:
         batch_x: torch.Tensor
@@ -173,8 +177,12 @@ def forward_three_item_loader(
 
 
 def forward_two_item_loader(
-                    loader, model, device, criterion, task_id=0,
-                ):
+    loader,
+    model,
+    device,
+    criterion,
+    task_id=0,
+):
     """
     See test_anomaly_detection() in exp_sup.py
     """
@@ -183,11 +191,17 @@ def forward_two_item_loader(
     labels = []
     recon = []
     with torch.no_grad():
-        for i, (batch_x, batch_y) in enumerate(tqdm(loader, 'attens_energy')):
-            batch_x = batch_x.float().to(device) # e.g. (256, 500, 1)
+        for i, (batch_x, batch_y) in enumerate(tqdm(loader, "attens_energy")):
+            batch_x = batch_x.float().to(device)  # e.g. (256, 500, 1)
             # reconstruction
             outputs = model(
-                batch_x, None, None, None, task_id=task_id, task_name='anomaly_detection')
+                batch_x,
+                None,
+                None,
+                None,
+                task_id=task_id,
+                task_name="anomaly_detection",
+            )
             # criterion
             score = get_score(criterion, batch_x, outputs)
 
@@ -198,18 +212,19 @@ def forward_two_item_loader(
     return attens_energy, recon, labels
 
 
-def reshape_arrays_to_input_lengths(attens_energy, labels, recon,
-                                    length_PLR: int = 1981, window_size: int = 500):
-    attens = reshape_array(attens_energy, window_size=window_size, length_PLR=length_PLR)
+def reshape_arrays_to_input_lengths(
+    attens_energy, labels, recon, length_PLR: int = 1981, window_size: int = 500
+):
+    attens = reshape_array(
+        attens_energy, window_size=window_size, length_PLR=length_PLR
+    )
     recon = reshape_array(recon, window_size=window_size, length_PLR=length_PLR)
     labels = reshape_array(array=labels, window_size=window_size, length_PLR=length_PLR)
     assert attens.shape == recon.shape == labels.shape
     return attens, labels, recon
 
 
-
 def get_attens_energy(loader, model, device, criterion):
-
     example: list = next(iter(loader))
     no_of_items_in_batch = len(example)
 
@@ -220,21 +235,27 @@ def get_attens_energy(loader, model, device, criterion):
             loader, model, device, criterion
         )
     elif no_of_items_in_batch == 2:
-    # UniTS has only data and labels
+        # UniTS has only data and labels
         attens_energy, recon, labels = forward_two_item_loader(
             loader, model, device, criterion
         )
     else:
-        logger.error('No of items = {} in dataloader not supported'.format(no_of_items_in_batch))
-        raise ValueError('No of items = {} in dataloader not supported'.format(no_of_items_in_batch))
+        logger.error(
+            "No of items = {} in dataloader not supported".format(no_of_items_in_batch)
+        )
+        raise ValueError(
+            "No of items = {} in dataloader not supported".format(no_of_items_in_batch)
+        )
 
     attens_energy = np.concatenate(attens_energy, axis=0)
-    recon = np.concatenate(recon, axis=0)#[:,:,0]
-    labels = np.concatenate(labels, axis=0)#[:,:,0]
-    attens_energy, labels, recon = reshape_arrays_to_input_lengths(attens_energy, labels, recon)
+    recon = np.concatenate(recon, axis=0)  # [:,:,0]
+    labels = np.concatenate(labels, axis=0)  # [:,:,0]
+    attens_energy, labels, recon = reshape_arrays_to_input_lengths(
+        attens_energy, labels, recon
+    )
 
     outlier_percentage = 100 * (labels.sum() / labels.size)
-    logger.info(f'Outliers masked {outlier_percentage:2f}%')
+    logger.info(f"Outliers masked {outlier_percentage:2f}%")
 
     return attens_energy, labels, recon
 
@@ -248,13 +269,14 @@ def combine_lists_of_ndarrays(list1: list, list2: list):
     return np.concatenate((array1, array2), axis=0)
 
 
-def convert_flat_to_2d_array(flat_arrays: dict, window_size: int = 500, length_PLR: int = 1981):
-
+def convert_flat_to_2d_array(
+    flat_arrays: dict, window_size: int = 500, length_PLR: int = 1981
+):
     dict_out = {}
     for key, array in flat_arrays.items():
-        a = 1
-        dict_out[key] = reshape_array(array=array, window_size=window_size, length_PLR=length_PLR, dim=1)
-
+        dict_out[key] = reshape_array(
+            array=array, window_size=window_size, length_PLR=length_PLR, dim=1
+        )
 
 
 def eval_outlier_detection(
@@ -262,9 +284,9 @@ def eval_outlier_detection(
     train_loader,
     test_loader,
     device_id: int = 0,
-    device = None,
+    device=None,
     task_id: int = None,
-    features: str = 'S',
+    features: str = "S",
     anomaly_ratio: float = 10,
     # these are now annoyingly hard-coded :(
     window_size: int = 500,
@@ -295,12 +317,16 @@ def eval_outlier_detection(
     combined_labels = np.concatenate([train_labels, test_labels], axis=0).flatten()
 
     # instead of a prior, use the actual anomaly ratio
-    anomaly_ratio = 100 * (np.sum(combined_labels) / combined_labels.shape[0]) # 15.625
-    threshold = np.percentile(combined_energy, 100 - anomaly_ratio) # float threshold, e.g. 0.00389
-    logger.info(f"Threshold = {threshold:.5f}, at anomaly_percentage = {anomaly_ratio:.2f}%")
+    anomaly_ratio = 100 * (np.sum(combined_labels) / combined_labels.shape[0])  # 15.625
+    threshold = np.percentile(
+        combined_energy, 100 - anomaly_ratio
+    )  # float threshold, e.g. 0.00389
+    logger.info(
+        f"Threshold = {threshold:.5f}, at anomaly_percentage = {anomaly_ratio:.2f}%"
+    )
 
     # (3) evaluation on the splits
-    logger.info('Getting the evaluation metrics')
+    logger.info("Getting the evaluation metrics")
     metrics_test["outlier_train"] = metrics_per_split(
         energy=train_energy, labels=train_labels, threshold=threshold
     )
