@@ -14,6 +14,7 @@ data_dict = {
     # 'm4': Dataset_M4,  Removed due to the LICENSE file constraints of m4.py
     'PSM': PSMSegLoader,
     'PLR': PLRSegLoader,
+    'PLR_gt': PLRSegLoader,
     'MSL': MSLSegLoader,
     'SMAP': SMAPSegLoader,
     'SMD': SMDSegLoader,
@@ -91,6 +92,8 @@ def data_provider(args, config, flag, ddp=False):  # args,
                 root_path=config['root_path'],
                 win_size=config['seq_len'],
                 flag=flag,
+                # for PLR loaders
+                name=config['data']
             )
         assert len(data_set) > 0, 'Your dataset is empty'
         if args.subsample_pct is not None and flag == "train":

@@ -15,7 +15,7 @@ from utils.mlflow_utils import init_mlflow, init_mlflow_experiment
 # env:// rendezvous: environment variable RANK expected, but not set
 # https://stackoverflow.com/a/76828907/6412152
 os.environ['MASTER_ADDR'] = 'localhost'
-os.environ['MASTER_PORT'] = '12355'
+os.environ['MASTER_PORT'] = '12455'
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 # dist.init_process_group(backend='gloo',
 #                         init_method='env://',

@@ -429,18 +429,27 @@ def dataset_PLR_numpy(root_path, flatten_data: str = False):
 
 
 class PLRSegLoader(Dataset):
-    def __init__(self, root_path, win_size, step=1, flag="train",
+    def __init__(self, root_path, win_size, step=1, flag="train", name='PLR',
                  flatten_data: str = True):
         self.flag = flag
         self.step = step
         self.win_size = win_size
+        if name == 'PLR_gt':
+            suffix = '-gt'
+        elif name == 'PLR':
+            suffix = ''
+        else:
+            print(f'Unknown name = {name}')
+            raise ValueError(f'Unknown name = {name}')
         #self.scaler = StandardScaler()
-        data = pd.read_csv(os.path.join(root_path, 'train.csv'))
+        train_path = os.path.join(root_path, f'train{suffix}.csv')
+        print(f'train_path = {train_path}')
+        data = pd.read_csv(train_path)
         data = data.values # this is already preprocessed, coming from export_df_to_ts_format()
         data = np.nan_to_num(data)
         #self.scaler.fit(data)
         #data = self.scaler.transform(data)
-        test_data = pd.read_csv(os.path.join(root_path, 'test.csv'))
+        test_data = pd.read_csv(os.path.join(root_path, f'test{suffix}.csv'))
         test_data = test_data.values
         self.test = np.nan_to_num(test_data)
         #self.test = self.scaler.transform(test_data)
@@ -448,9 +457,9 @@ class PLRSegLoader(Dataset):
         data_len = len(self.train)
         self.val = self.train[(int)(data_len * 0.8):]
         self.test_labels = pd.read_csv(os.path.join(
-            root_path, 'test_label.csv')).values
+            root_path, f'test{suffix}_label.csv')).values
         self.train_labels = pd.read_csv(os.path.join(
-            root_path, 'train_label.csv')).values
+            root_path, f'train{suffix}_label.csv')).values
 
         if flatten_data:
             # e.g. (1420,500) -> (710000,1)

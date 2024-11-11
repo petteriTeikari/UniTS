@@ -32,7 +32,7 @@ torchrun --nnodes 1 --nproc-per-node=1  --master_port $random_port  run.py \
   --debug $wandb_mode \
   --project_name $project_name \
   --clip_grad 100 \
-  --task_data_config_path data_provider/PLR_outlier.yaml \
+  --task_data_config_path data_provider/PLR_outlier_gt.yaml \
   --mlflow-tracking-uri repo_desktop_clone/foundation_PLR/src/mlruns \
   --mlflow-experiment PLR_OutlierDetection \
-  --mlflow-run UniTS-Outlier-orig-finetune
+  --mlflow-run UniTS-Outlier-gt-finetune

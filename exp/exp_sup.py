@@ -435,8 +435,7 @@ class Exp_All_Task(object):
                               use_original_eval=use_original_eval, vanilla_loaders=vanilla_loaders)
 
                 if extra_dict_metrics is not None:
-                    # using the adjusted F1
-                    metric_this_epoch = extra_dict_metrics['outlier_test']['scalars']['adjbestf1']
+                    metric_this_epoch = extra_dict_metrics['outlier_test']['scalars']['f1']
                 else:
                     metric_this_epoch = avg_f1
 
