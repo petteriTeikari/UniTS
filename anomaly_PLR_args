@@ -14,7 +14,7 @@
   --lradj finetune_anl
   --learning_rate 5e-4
   --weight_decay 1e-3
-  --train_epochs 10
+  --train_epochs 20
   --batch_size 32
   --acc_it 32
   --dropout 0
