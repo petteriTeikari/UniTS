@@ -25,7 +25,7 @@ def log_mlflow_params(args):
 def mlflow_log_metrics(metrics_dict: dict):
 
     for split in metrics_dict.keys():
-        split_out = split.replace('outlier_', '')
+        split_out = split # split.replace('outlier_', '')
         scalars = metrics_dict[split]['scalars']
         for key, value in scalars.items():
             if value is not None:
