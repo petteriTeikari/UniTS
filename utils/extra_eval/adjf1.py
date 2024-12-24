@@ -60,7 +60,10 @@ def adjust_predicts(score, label, threshold=None, pred=None, calc_latency=False)
         return predict
 
 
-def adjbestf1_with_threshold(y_true: np.array, y_scores: np.array, n_splits: int = 100):
+def adjbestf1_with_threshold(y_true: np.array,
+                             y_scores: np.array,
+                             n_splits: int = 100,
+                             adj_f1_threshold: float = None):
     # modified from the original MOMENT code
     thresholds = np.linspace(y_scores.min(), y_scores.max(), n_splits)
     adjusted_f1 = np.zeros(thresholds.shape)
@@ -78,5 +81,15 @@ def adjbestf1_with_threshold(y_true: np.array, y_scores: np.array, n_splits: int
 
     best_adjusted_f1 = np.max(adjusted_f1)
     best_threshold = thresholds[np.argmax(adjusted_f1)]
+
+    if adj_f1_threshold is not None:
+        # for example, when you have already computed "global stats" as in across the whole dataset
+        # and you want you use that value instead of defining a new threshold for each subject when
+        # doing the "subjectwise stats"
+        y_pred = y_scores >= adj_f1_threshold
+        best_adjusted_f1 = f1_score(y_pred, y_true)
+        # return either way the subject-specific thresholds so that you have an idea of the spread?
+        # might get confusing to remember why you have different thresholds returned to MLflow
+        # even though you always used a fixed threshold when computing the F1
 
     return best_adjusted_f1, best_threshold

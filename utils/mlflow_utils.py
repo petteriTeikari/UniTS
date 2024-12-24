@@ -3,6 +3,7 @@ import os
 import pickle
 
 import mlflow
+import numpy as np
 
 
 def init_mlflow(tracking_uri: str):
@@ -26,10 +27,14 @@ def mlflow_log_metrics(metrics_dict: dict):
 
     for split in metrics_dict.keys():
         split_out = split # split.replace('outlier_', '')
-        scalars = metrics_dict[split]['scalars']
+        scalars = metrics_dict[split]['scalars']['global']
         for key, value in scalars.items():
             if value is not None:
-                mlflow.log_metric(f'{split_out}/{key}', value)
+                if isinstance(value, np.ndarray):
+                    mlflow.log_metric(f'{split_out}/{key}_lo', value[0])
+                    mlflow.log_metric(f'{split_out}/{key}_hi', value[1])
+                else:
+                    mlflow.log_metric(f'{split_out}/{key}', value)
 
 
 def mlflow_log_model(checkpoint_path: str):
