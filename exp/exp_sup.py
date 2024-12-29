@@ -645,6 +645,7 @@ class Exp_All_Task(object):
 
     def test(self, setting, load_pretrain=False, test_data_list=None, test_loader_list=None,
              use_original_eval: bool=False, vanilla_loaders: dict = None):
+
         self.path = os.path.join(self.args.checkpoints, setting)
         if not os.path.exists(self.path) and is_main_process():
             os.makedirs(self.path)
@@ -746,7 +747,15 @@ class Exp_All_Task(object):
 
         avg_anomaly_f_score = np.average(avg_anomaly_f_score)
 
-        # if is_main_process():
+        artifacts = {'results': extra_dict_metrics,
+                     'best_epoch': 0,
+                     'best_metric': None}
+
+        if is_main_process():
+            mlflow_log_experiment(None,
+                                  artifacts=artifacts,
+                                  checkpoint_path=pretrain_weight_path,
+                                  args=self.args)
         #     wandb.log({'avg_eval_LF-mse': avg_long_term_forecast_mse, 'avg_eval_LF-mae': avg_long_term_forecast_mae,
         #                'avg_eval_CLS-acc': avg_classification_acc,
         #                'avg_eval_IMP-mse': avg_imputation_mse, 'avg_eval_IMP-mae': avg_imputation_mae,

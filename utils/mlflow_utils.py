@@ -57,12 +57,15 @@ def mlflow_log_experiment(epoch_losses: list,
                           args):
 
     mlflow_log_metrics(metrics_dict=artifacts['results'])
-    mlflow_log_model(checkpoint_path=checkpoint_path)
+    if epoch_losses is not None:
+        # None when training was not on, as in this was a zeroshot, the weights did not change
+        mlflow_log_model(checkpoint_path=checkpoint_path)
     mlflow_log_results(artifacts, checkpoint_path=checkpoint_path, args=args)
 
     # Best train loss
-    loss = epoch_losses[artifacts['best_epoch']]
-    mlflow.log_metric('train/loss', loss)
+    if epoch_losses is not None:
+        loss = epoch_losses[artifacts['best_epoch']]
+        mlflow.log_metric('train/loss', loss)
 
     # copy the data .yaml to MLflow, make the path absolute before
     data_yaml = os.path.abspath(args.task_data_config_path)

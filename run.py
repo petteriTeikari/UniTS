@@ -1,6 +1,7 @@
 import argparse
 import os
 
+import mlflow
 import torch
 from exp.exp_sup import Exp_All_Task as Exp_All_Task_SUP
 import random
@@ -9,7 +10,7 @@ import wandb
 from utils.ddp import is_main_process, init_distributed_mode
 from torch import distributed as dist
 
-from utils.mlflow_utils import init_mlflow, init_mlflow_experiment
+from utils.mlflow_utils import init_mlflow, init_mlflow_experiment, log_mlflow_params
 
 # ValueError: Error initializing torch.distributed using
 # env:// rendezvous: environment variable RANK expected, but not set
@@ -195,6 +196,7 @@ if __name__ == '__main__':
             print('>>>>>>>start training : {}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting))
             exp.train(setting, mlflow_run_name)
     else:
+        print('Training is not on: Zero-shot')
         ii = 0
         setting = '{}_{}_{}_{}_ft{}_dm{}_el{}_{}_{}'.format(
             args.task_name,
@@ -208,5 +210,9 @@ if __name__ == '__main__':
 
         exp = Exp(args)  # set experiments
         print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
-        exp.test(setting, load_pretrain=True)
-        torch.cuda.empty_cache()
+        with ((mlflow.start_run(run_name=mlflow_run_name))):
+            log_mlflow_params(args=args)
+            exp.test(setting, load_pretrain=True)
+            torch.cuda.empty_cache()
+
+
