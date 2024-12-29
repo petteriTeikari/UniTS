@@ -420,12 +420,27 @@ def dataset_PLR_numpy(root_path, flatten_data: str = False):
 
     X = torch.Tensor(data[:, :, np.newaxis])  # transform to torch tensor
     y = torch.Tensor(train_labels[:, :, np.newaxis])
+    # X, y = reshape_data_to_original_shape(X, y)
     train_dataset = TensorDataset(X, y)
     X = torch.Tensor(test_data[:, :, np.newaxis])  # transform to torch tensor
     y = torch.Tensor(test_labels[:, :, np.newaxis])
+    # X, y = reshape_data_to_original_shape(X, y) done during eval
     test_dataset = TensorDataset(X, y)
 
     return train_dataset, test_dataset
+
+
+def reshape_data_to_original_shape(X, y, window_sz: int = 500):
+
+    init_length = 2000
+    X_out = torch.reshape(X, (-1, init_length, 1))
+    X_out = X_out[:, 9:1990, :] # hardcoded now, comes from pad_glaucoma_PLR()
+
+    y = torch.reshape(y, (-1, init_length, 1))
+    y = y[:, 9:1990, :]
+    print('Reshape for vanilla dataloader to shape = {}'.format(X_out.shape))
+
+    return X_out, y
 
 
 class PLRSegLoader(Dataset):
