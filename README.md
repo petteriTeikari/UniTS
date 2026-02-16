@@ -1,136 +1,68 @@
-# Unified Time Series Model
+# UniTS (PLR Evaluation Fork)
 
-[**Project Page**](https://zitniklab.hms.harvard.edu/projects/UniTS/)  |   [**Paper link**](https://arxiv.org/pdf/2403.00131.pdf) **(Neurips 2024)**
+Fork of [mims-harvard/UniTS](https://github.com/mims-harvard/UniTS) adapted for pupillary light reflex (PLR) biosignal evaluation under the [foundation_PLR](https://github.com/petteriTeikari/foundation_PLR) project.
 
-UniTS is a unified time series model that can process various tasks across multiple domains with shared parameters and does not have any task-specific modules.
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#E8F4FD', 'primaryBorderColor': '#7BA7C9', 'primaryTextColor': '#2C3E50', 'secondaryColor': '#FDF2E9', 'secondaryBorderColor': '#D4A574', 'secondaryTextColor': '#2C3E50', 'tertiaryColor': '#EAFAF1', 'tertiaryBorderColor': '#82C9A1', 'tertiaryTextColor': '#2C3E50', 'lineColor': '#5D6D7E', 'textColor': '#2C3E50', 'background': '#FFFFFF', 'mainBkg': '#E8F4FD', 'nodeBorder': '#7BA7C9', 'clusterBkg': '#F8F9FA', 'clusterBorder': '#BDC3C7', 'fontSize': '14px'}}}%%
+flowchart LR
+    A[Multi-domain Time Series]:::input --> B[Unified Tokenizer]
+    B --> C[Shared Transformer]
+    C --> D[Classification]:::output
+    C --> E[Forecasting]:::output
+    C --> F[Imputation]:::output
+    C --> G[Anomaly Detection]:::output
 
-Authors: [Shanghua Gao](https://shgao.site/) [Teddy Koker](https://teddykoker.com) [Owen Queen](https://owencqueen.github.io/) [Thomas Hartvigsen](https://www.tomhartvigsen.com/) [Theodoros Tsiligkaridis](https://sites.google.com/view/theo-t) [Marinka Zitnik](https://zitniklab.hms.harvard.edu/)
+    classDef input fill:#FDF2E9,stroke:#D4A574
+    classDef output fill:#EAFAF1,stroke:#82C9A1
+```
+
+## Why This Fork Exists
+
+This fork was created because integrating UniTS as a submodule or dependency within [petteriTeikari/foundation_PLR](https://github.com/petteriTeikari/foundation_PLR) proved difficult due to UniTS's directory structure and script assumptions. Maintaining a separate fork with PLR-specific argument configs (`anomaly_PLR_args`, `anomaly_PLR_args_zeroshot`) allows clean experiment reproduction without modifying the upstream codebase.
+
+**Parent project**: [petteriTeikari/foundation_PLR](https://github.com/petteriTeikari/foundation_PLR) -- Foundation models for pupillary light reflex biosignal analysis.
+
+**Upstream**: [mims-harvard/UniTS](https://github.com/mims-harvard/UniTS) -- The original UniTS implementation by Harvard MIMS Lab.
 
 ## Overview
-Foundation models, especially LLMs, are profoundly transforming deep learning. Instead of training many task-specific models, we can adapt a single pretrained model to many tasks via few-shot prompting or fine-tuning. However, current foundation models apply to sequence data but not to time series, which present unique challenges due to the inherent diverse and multi-domain time series datasets, diverging task specifications across forecasting, classification and other types of tasks, and the apparent need for task-specialized models.
 
-We developed UniTS, a unified time series model that supports a universal task specification, accommodating classification, forecasting, imputation, and anomaly detection tasks. This is achieved through a novel unified network backbone, which incorporates sequence and variable attention along with a dynamic linear operator and is trained as a unified model. 
+UniTS is a unified time series model that handles classification, forecasting, imputation, and anomaly detection with shared parameters and no task-specific modules. It uses a novel backbone combining sequence and variable attention with a dynamic linear operator, trained jointly across 38 multi-domain datasets.
 
-Across 38 multi-domain datasets, UniTS demonstrates superior performance compared to task-specific models and repurposed natural language-based LLMs. UniTS exhibits remarkable zero-shot, few-shot, and prompt learning capabilities when evaluated on new data domains and tasks.
+This fork adds PLR-specific anomaly detection configurations for evaluating UniTS on pupillometric time series data.
 
-<p align="center">
-    <img src="https://zitniklab.hms.harvard.edu/img/UniTS-1.png" alt="UniTS-1" width="500">
-</p>
+## Key Features
 
-## Setups
+- **Unified architecture** -- Single model for classification, forecasting, imputation, and anomaly detection
+- **Multi-domain training** -- Joint training across diverse time series domains
+- **Zero-shot and few-shot transfer** -- Generalizes to unseen datasets and task configurations
+- **PLR configs** -- Pre-configured argument files for PLR biosignal anomaly detection
 
-### 1. Requirements
- Install Pytorch2.0+ and the required packages.
-```
+## Quick Start
+
+```bash
 pip install -r requirements.txt
-```
-
-### 2. Prepare data
-```
 bash download_data_all.sh
-```
-Datasets configs for different multi-task settings are shown in `.ymal` files of the `data_provider` folder.
 
-By default, all experiments follow the multi-task setting where one UniTS model is jointly trained on  mulitple datasets.
+# PLR anomaly detection (few-shot)
+bash ./scripts/few_shot_anomaly_detection/UniTS_finetune_few_shot_anomaly_detection.sh
 
-### 3. Train and evaluate model
-
-#### 1. Multi-task learning on forecasting and classification tasks:
-
-- Pretraining + Prompt learning
-```
+# Standard multi-task training
 bash ./scripts/pretrain_prompt_learning/UniTS_pretrain_x128.sh
 ```
 
-- Supervised learning
-```
-bash ./scripts/supervised_learning/UniTS_supervised.sh
-```
-
-#### 2. Few-shot transfer learning on new forecasting and classification tasks:
-
-**Note: Please follow the instruction in following training scripts to get the pretrained ckpt first.** 
-
-- Finetuning
-```
-# please set the pretrianed model path in the script.
-bash ./scripts/few_shot_newdata/UniTS_finetune_few_shot_newdata_pct20.sh
-```
-
-- Prompt tuning
-```
-# please set the pretrianed model path in the script.
-bash ./scripts/few_shot_newdata/UniTS_prompt_tuning_few_shot_newdata_pct20.sh
-```
-
-#### 3. Few-shot transfer learning on anomaly detection tasks:
-- Finetuning
-```
-# please set the pretrianed model path in the script.
-bash ./scripts/few_shot_anomaly_detection/UniTS_finetune_few_shot_anomaly_detection.sh
-```
-- Prompt tuning
-```
-# please set the pretrianed model path in the script.
-bash ./scripts/few_shot_anomaly_detection/UniTS_prompt_tuning_few_shot_anomaly_detection.sh
-```
-
-#### 4. Few-shot transfer learning on imputation tasks:
-- Finetuning
-```
-# please set the pretrianed model path in the script.
-bash ./scripts/few_shot_imputation/UniTS_finetune_few_shot_imputation_mask050.sh
-```
-
-- Prompt tuning
-```
-# please set the pretrianed model path in the script.
-bash ./scripts/few_shot_imputation/UniTS_prompt_tuning_few_shot_imputation_mask050.sh
-```
-
-#### 5. Zero-shot learning on new forecasting length:
-```
-# please set the pretrianed model path in the script.
-bash ./scripts/zero_shot/UniTS_forecast_new_length_unify.sh
-```
-
-#### 6. Zero-shot learning on new forecasting datasets:
-```
-# A special verison of UniTS with shared prompt/mask tokens needs to be trained for this setting.
-bash ./scripts/zero_shot/UniTS_zeroshot_newdata.sh
-```
-
-## Use UniTS on your own data.
-UniTS is a highly flexible unified time series model, supporting tasks such as forecasting, classification, imputation, and anomaly detection with a single shared model and shared weights. We provide a [Tutorial](Tutorial.md)  to assist you in using your own data with UniTS.
-
-## Pretrained weights
-We provide the pretrained weights for models mentioned above in [checkpoints](https://github.com/mims-harvard/UniTS/releases/tag/ckpt).
+See the upstream [Tutorial](Tutorial.md) for using UniTS on custom datasets.
 
 ## Citation
 
-```
-@article{gao2024building,
+```bibtex
+@inproceedings{gao2024units,
   title={UniTS: Building a Unified Time Series Model},
   author={Gao, Shanghua and Koker, Teddy and Queen, Owen and Hartvigsen, Thomas and Tsiligkaridis, Theodoros and Zitnik, Marinka},
-  journal={arXiv},
-  url={https://arxiv.org/pdf/2403.00131.pdf},
+  booktitle={NeurIPS},
   year={2024}
 }
 ```
 
-## Acknowledgement
-This codebase is built based on the [Time-Series-Library](https://github.com/thuml/Time-Series-Library). Thanks!
+## License
 
-## Disclaimer
-
-DISTRIBUTION STATEMENT: Approved for public release. Distribution is unlimited.
-
-This material is based upon work supported by the Under Secretary of Defense for Research and Engineering under Air Force Contract No. FA8702-15-D-0001. Any opinions, findings, conclusions or recommendations expressed in this material are those of the author(s) and do not necessarily reflect the views of the Under Secretary of Defense for Research and Engineering.
-
-© 2024 Massachusetts Institute of Technology.
-
-Subject to FAR52.227-11 Patent Rights - Ownership by the contractor (May 2014)
-
-The software/firmware is provided to you on an As-Is basis
-
-Delivered to the U.S. Government with Unlimited Rights, as defined in DFARS Part 252.227-7013 or 7014 (Feb 2014). Notwithstanding any copyright notice, U.S. Government rights in this work are defined by DFARS 252.227-7013 or DFARS 252.227-7014 as detailed above. Use of this work other than as specifically authorized by the U.S. Government may violate any copyrights that exist in this work.
+MIT License (from upstream). See [LICENSE](LICENSE) for details.
